@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Reserva de Otras Aulas</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .cell-libre:hover { transform: scale(1.02); }
+  /* Espacio del recreo entre 3ª y 4ª hora */
+  tr.recreo > td { padding-top: 22px; border-top: 3px double #cbd5e1 !important; position: relative; }
+  tr.recreo > td:first-child::before {
+    content: "☕ recreo";
+    position: absolute;
+    top: 2px; left: 8px;
+    font-size: 10px; color: #94a3b8; font-weight: 600;
+    letter-spacing: 0.5px;
+  }
+</style>
+</head>
+<body class="bg-gradient-to-br from-slate-100 to-slate-200 min-h-screen">
+
+<div class="max-w-7xl mx-auto p-4 sm:p-6">
+
+  <!-- Cabecera -->
+  <header class="bg-white rounded-2xl shadow-lg p-6 mb-6 border-t-4 border-indigo-500">
+    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+      <div>
+        <h1 class="text-3xl font-bold text-slate-800">📅 Reserva de Otras Aulas</h1>
+        <p class="text-slate-500 mt-1">Gestión semanal de las 3 aulas del centro</p>
+      </div>
+      <div class="flex items-center gap-3">
+        <label class="text-sm font-medium text-slate-600">Modo:</label>
+        <select id="modo" class="rounded-lg border-slate-300 border px-3 py-2 text-sm bg-white shadow-sm">
+          <option value="docente">👩‍🏫 Docente (reservar)</option>
+          <option value="admin">🔒 Responsable (bloquear)</option>
+        </select>
+      </div>
+    </div>
+  </header>
+
+  <!-- Navegación semanal -->
+  <div class="bg-white rounded-2xl shadow-md p-4 mb-6 flex flex-wrap items-center justify-between gap-3">
+    <div class="flex gap-2">
+      <button id="prevWeek" class="px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium transition">← Anterior</button>
+      <button id="hoyBtn" class="px-4 py-2 rounded-lg bg-indigo-500 hover:bg-indigo-600 text-white font-medium transition">Hoy</button>
+      <button id="nextWeek" class="px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium transition">Siguiente →</button>
+    </div>
+    <div id="rangoSemana" class="text-lg font-semibold text-slate-700"></div>
+    <input type="week" id="selectorSemana" class="border rounded-lg px-3 py-2 text-sm" />
+  </div>
+
+  <!-- Aulas -->
+  <div id="aulasContainer" class="space-y-6"></div>
+
+  <!-- Instrucciones -->
+  <div class="mt-8 bg-white rounded-2xl shadow-md p-6 text-sm text-slate-600">
+    <h3 class="font-bold text-slate-800 mb-2">ℹ️ Cómo usar</h3>
+    <ul class="list-disc pl-5 space-y-1">
+      <li><b>Docente</b>: haz clic en una casilla verde libre para reservarla indicando tu <b>nombre</b> y <b>departamento</b>.</li>
+      <li><b>Docente</b>: puedes cancelar tu propia reserva escribiendo el mismo nombre.</li>
+      <li><b>Responsable</b>: al bloquear una hora, queda bloqueada esa misma hora <b>todas las semanas siguientes</b>. Al desbloquearla, queda libre desde esa semana en adelante (las semanas pasadas se conservan bloqueadas para trazabilidad).</li>
+      <li>Usa las flechas o el selector para navegar entre semanas del curso.</li>
+      <li>Los datos se guardan automáticamente en este navegador (localStorage).</li>
+    </ul>
+    <div class="mt-4 flex gap-2">
+      <button id="exportarBtn" class="px-3 py-1.5 rounded-lg bg-slate-800 text-white text-xs hover:bg-slate-700">Exportar datos</button>
+      <button id="importarBtn" class="px-3 py-1.5 rounded-lg bg-slate-200 text-slate-700 text-xs hover:bg-slate-300">Importar datos</button>
+      <button id="resetBtn" class="px-3 py-1.5 rounded-lg bg-red-100 text-red-700 text-xs hover:bg-red-200">Borrar todo</button>
+    </div>
+  </div>
+
+</div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-app.js";
+import {
+  getFirestore,
+  doc,
+  getDoc,
+  setDoc,
+  onSnapshot
+} from "https://www.gstatic.com/firebasejs/12.4.0/firebase-firestore.js";
+
+  // ==== FIREBASE ====
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyAQ80tF-78IeY4GdzgEmoZNolrA4MsIeIE",
+    authDomain: "reserva-otras-aulas.firebaseapp.com",
+    projectId: "reserva-otras-aulas",
+    storageBucket: "reserva-otras-aulas.firebasestorage.app",
+    messagingSenderId: "480846342407",
+    appId: "1:480846342407:web:c771bcaed12b70e8e77da2"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const db = getFirestore(app);
+
+  // ==== CONFIGURACIÓN ====
+  const AULAS = [
+    { id: "Salón de Actos", nombre: "Salón de Actos" },
+    { id: "Biblioteca", nombre: "Biblioteca" },
+    { id: "S101", nombre: "S101"},
+  ];
+  const HORAS = ["1ª hora","2ª hora","3ª hora","4ª hora","5ª hora","6ª hora"];
+  const DIAS = ["Lunes","Martes","Miércoles","Jueves","Viernes"];
+  const STORAGE_KEY = "reservas_aulas_v2";
+  const CODIGO_RESPONSABLE = "33029901";
+
+  // Estructura:
+  // {
+  //   reservas: { "aulaId|YYYY-MM-DD|horaIdx": { nombre, departamento } },
+  //   bloqueosRec: { "aulaId|diaSemana(0-4)|horaIdx": [ { desde:"YYYY-MM-DD", hasta:"YYYY-MM-DD"|null, motivo } ] }
+  // }
+  let store = {
+  reservas: {},
+  bloqueosRec: {}
+};
+
+const reservasRef = doc(db, "reservas", "datos");
+
+onSnapshot(reservasRef, (snapshot) => {
+  if (snapshot.exists()) {
+    store = snapshot.data();
+  } else {
+    store = {
+      reservas: {},
+      bloqueosRec: {}
+    };
+  }
+
+  render();
+});
+
+  // Migración desde v1 (si existiera)
+  try {
+    const v1 = JSON.parse(localStorage.getItem("reservas_aulas_v1") || "null");
+    if(v1 && !localStorage.getItem(STORAGE_KEY)){
+      Object.entries(v1).forEach(([k,v])=>{
+        if(v.tipo === 'reserva') store.reservas[k] = { nombre: v.nombre, departamento: '' };
+        // los bloqueos antiguos puntuales no se migran a recurrentes automáticamente
+      });
+      guardar();
+    }
+  } catch(e){}
+
+  let adminAutenticada = false;
+
+  function esPasado(fechaISO){
+    const hoy = new Date(); hoy.setHours(0,0,0,0);
+    const [y,m,d] = fechaISO.split('-').map(Number);
+    const f = new Date(y, m-1, d); f.setHours(0,0,0,0);
+    return f < hoy;
+  }
+
+  let fechaActual = new Date();
+
+  async function guardar(){
+  try {
+    await setDoc(reservasRef, store);
+  } catch (error) {
+    console.error("Error al guardar en Firestore:", error);
+    alert("No se han podido guardar los cambios.");
+  }
+}
+
+  function lunesDe(fecha){
+    const d = new Date(fecha);
+    const dia = d.getDay();
+    const diff = (dia === 0 ? -6 : 1 - dia);
+    d.setDate(d.getDate() + diff);
+    d.setHours(0,0,0,0);
+    return d;
+  }
+  function fmtISO(d){
+    const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,'0'), dd=String(d.getDate()).padStart(2,'0');
+    return `${y}-${m}-${dd}`;
+  }
+  function fmtCorto(d){
+    return d.toLocaleDateString('es-ES', { day:'2-digit', month:'short' });
+  }
+  function mismaFecha(a,b){ return a.getFullYear()===b.getFullYear() && a.getMonth()===b.getMonth() && a.getDate()===b.getDate(); }
+  function restarDia(fechaISO){
+    const [y,m,d] = fechaISO.split('-').map(Number);
+    const f = new Date(y, m-1, d);
+    f.setDate(f.getDate()-1);
+    return fmtISO(f);
+  }
+  function compararISO(a,b){ return a < b ? -1 : (a > b ? 1 : 0); }
+
+  function getISOWeek(date) {
+    const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+    const day = d.getUTCDay() || 7;
+    d.setUTCDate(d.getUTCDate() + 4 - day);
+    const yearStart = new Date(Date.UTC(d.getUTCFullYear(),0,1));
+    const weekNo = Math.ceil((((d - yearStart) / 86400000) + 1)/7);
+    return { year: d.getUTCFullYear(), week: weekNo };
+  }
+  function setSelectorSemana(){
+    const {year, week} = getISOWeek(fechaActual);
+    document.getElementById('selectorSemana').value = `${year}-W${String(week).padStart(2,'0')}`;
+  }
+
+  // Devuelve el bloqueo activo (recurrente) para un aula/día/hora en una fecha concreta
+  function bloqueoActivo(aulaId, diaSemana, horaIdx, fechaISO){
+    const arr = store.bloqueosRec[`${aulaId}|${diaSemana}|${horaIdx}`] || [];
+    for(const b of arr){
+      if(compararISO(fechaISO, b.desde) >= 0 && (b.hasta === null || compararISO(fechaISO, b.hasta) <= 0)){
+        return b;
+      }
+    }
+    return null;
+  }
+
+  function render(){
+    const lunes = lunesDe(fechaActual);
+    const viernes = new Date(lunes); viernes.setDate(lunes.getDate()+4);
+    document.getElementById('rangoSemana').textContent =
+      `Semana del ${fmtCorto(lunes)} al ${fmtCorto(viernes)} de ${viernes.getFullYear()}`;
+    setSelectorSemana();
+
+    const cont = document.getElementById('aulasContainer');
+    cont.innerHTML = '';
+    const hoy = new Date(); hoy.setHours(0,0,0,0);
+
+    AULAS.forEach((aula, idxAula) => {
+      const colores = [
+        {border:'border-blue-500', chip:'bg-blue-100 text-blue-700'},
+        {border:'border-emerald-500', chip:'bg-emerald-100 text-emerald-700'},
+        {border:'border-amber-500', chip:'bg-amber-100 text-amber-700'},
+      ][idxAula];
+
+      const card = document.createElement('div');
+      card.className = `bg-white rounded-2xl shadow-lg overflow-hidden border-l-4 ${colores.border}`;
+      card.innerHTML = `
+        <div class="p-4 flex items-center justify-between flex-wrap gap-2">
+          <div>
+            <h2 class="text-xl font-bold text-slate-800">💻 Aula ${aula.nombre}</h2>
+            <p class="text-xs text-slate-500 mt-0.5">Capacidad: ${aula.capacidad}</p>
+          </div>
+          <span class="text-xs px-3 py-1 rounded-full ${colores.chip} font-semibold">6 horas / día</span>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead class="bg-slate-50">
+              <tr>
+                <th class="p-2 text-left text-slate-500 font-medium w-28">Hora</th>
+                ${DIAS.map((d,i)=>{
+                  const fd = new Date(lunes); fd.setDate(lunes.getDate()+i);
+                  const esHoy = mismaFecha(fd, hoy);
+                  return `<th class="p-2 text-center font-semibold ${esHoy?'text-indigo-600':'text-slate-700'}">
+                    ${d}<br><span class="text-xs font-normal ${esHoy?'text-indigo-500':'text-slate-400'}">${fmtCorto(fd)}${esHoy?' • hoy':''}</span>
+                  </th>`;
+                }).join('')}
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      `;
+      const tbody = card.querySelector('tbody');
+
+      HORAS.forEach((hora, hIdx) => {
+        const tr = document.createElement('tr');
+        tr.className = 'border-t border-slate-100' + (hIdx === 3 ? ' recreo' : '');
+        tr.innerHTML = `<td class="p-2 font-medium text-slate-600 bg-slate-50">${hora}</td>`;
+        for(let i=0;i<5;i++){
+          const fd = new Date(lunes); fd.setDate(lunes.getDate()+i);
+          const fISO = fmtISO(fd);
+          const keyRes = `${aula.id}|${fISO}|${hIdx}`;
+          const reserva = store.reservas[keyRes];
+          const bloq = bloqueoActivo(aula.id, i, hIdx, fISO);
+
+          const td = document.createElement('td');
+          td.className = 'p-1.5 align-middle';
+          let inner = '';
+          if(bloq){
+            const txt = bloq.motivo ? bloq.motivo : 'Bloqueado';
+            inner = `<button class="w-full h-14 rounded-lg bg-rose-300 hover:bg-rose-400 text-rose-900 text-xs font-semibold transition px-1">
+              🔒 ${txt}
+            </button>`;
+            td.dataset.tipo = 'bloqueo';
+          } else if(reserva){
+            inner = `<button class="w-full h-14 rounded-lg bg-blue-500 hover:bg-blue-600 text-white text-xs font-semibold p-1 transition leading-tight">
+              📝 ${reserva.nombre}${reserva.departamento?'<br><span class="font-normal opacity-90">'+reserva.departamento+'</span>':''}
+            </button>`;
+            td.dataset.tipo = 'reserva';
+          } else {
+            inner = `<button class="cell-libre w-full h-14 rounded-lg bg-emerald-50 hover:bg-emerald-100 border-2 border-dashed border-emerald-300 text-emerald-700 text-xs font-medium transition">+ Libre</button>`;
+            td.dataset.tipo = 'libre';
+          }
+          td.innerHTML = inner;
+          td.querySelector('button').addEventListener('click', ()=> onClickCelda(aula.id, fISO, i, hIdx));
+          tr.appendChild(td);
+        }
+        tbody.appendChild(tr);
+      });
+
+      cont.appendChild(card);
+    });
+  }
+
+  function pedirCodigoAdmin(){
+    if(adminAutenticada) return true;
+    const cod = prompt("🔒 Introduce el código de responsable:", "");
+    if(cod === null) return false;
+    if(cod.trim() !== CODIGO_RESPONSABLE){
+      alert("Código incorrecto. No tienes permisos de responsable.");
+      return false;
+    }
+    adminAutenticada = true;
+    return true;
+  }
+
+  function onClickCelda(aulaId, fechaISO, diaSemana, horaIdx){
+    const modo = document.getElementById('modo').value;
+    const pasado = esPasado(fechaISO);
+    const keyRes = `${aulaId}|${fechaISO}|${horaIdx}`;
+    const reserva = store.reservas[keyRes];
+    const bloq = bloqueoActivo(aulaId, diaSemana, horaIdx, fechaISO);
+
+    if(modo === 'admin'){
+      if(!pedirCodigoAdmin()){
+        document.getElementById('modo').value = 'docente';
+        return;
+      }
+      if(pasado){
+        alert("No se pueden modificar horas del pasado (trazabilidad).");
+        return;
+      }
+      if(bloq){
+        // Desbloquear a partir de esta fecha
+        if(!confirm(`¿Desbloquear esta hora a partir del ${fechaISO}?\n(Las semanas anteriores permanecen bloqueadas para trazabilidad.)`)) return;
+        const arrKey = `${aulaId}|${diaSemana}|${horaIdx}`;
+        const arr = store.bloqueosRec[arrKey];
+        // Ajustar el bloqueo activo: cerrar el día anterior
+        const idx = arr.indexOf(bloq);
+        if(compararISO(fechaISO, bloq.desde) === 0){
+          // Se desbloquea desde el mismo día en que empezó: eliminar el registro
+          arr.splice(idx, 1);
+        } else {
+          bloq.hasta = restarDia(fechaISO);
+        }
+        if(arr.length === 0) delete store.bloqueosRec[arrKey];
+      } else if(reserva){
+        if(!confirm(`Esta hora tiene una reserva de ${reserva.nombre}. ¿Deseas bloquearla de todas formas a partir de esta semana? (la reserva se eliminará solo en esta fecha)`)) return;
+        delete store.reservas[keyRes];
+        const motivo = prompt("Motivo del bloqueo (opcional):", "");
+        if(motivo === null) return;
+        const arrKey = `${aulaId}|${diaSemana}|${horaIdx}`;
+        if(!store.bloqueosRec[arrKey]) store.bloqueosRec[arrKey] = [];
+        store.bloqueosRec[arrKey].push({ desde: fechaISO, hasta: null, motivo: motivo.trim() });
+      } else {
+        const motivo = prompt("Motivo del bloqueo (opcional).\nEsta hora quedará bloqueada TODAS las semanas siguientes hasta que la desbloquees:", "");
+        if(motivo === null) return;
+        const arrKey = `${aulaId}|${diaSemana}|${horaIdx}`;
+        if(!store.bloqueosRec[arrKey]) store.bloqueosRec[arrKey] = [];
+        store.bloqueosRec[arrKey].push({ desde: fechaISO, hasta: null, motivo: motivo.trim() });
+      }
+    } else {
+      // Docente
+      if(bloq){ alert("Esta hora está bloqueada por el responsable."); return; }
+      if(!reserva){
+        if(pasado){ alert("No se pueden crear reservas en fechas pasadas."); return; }
+        const nombre = prompt("👩‍🏫 Introduce tu nombre y apellidos:", "");
+        if(!nombre || !nombre.trim()) return;
+        const depto = prompt("🏫 Introduce tu departamento:", "");
+        if(depto === null) return;
+        store.reservas[keyRes] = { nombre: nombre.trim(), departamento: depto.trim() };
+      } else {
+        if(pasado){
+          alert("Esta reserva ya ha pasado y no se puede cancelar (trazabilidad).");
+          return;
+        }
+        const nombre = prompt(`Reservado por "${reserva.nombre}" (${reserva.departamento||'sin depto.'}).\nEscribe el mismo nombre para cancelar:`, "");
+        if(nombre && nombre.trim().toLowerCase() === reserva.nombre.toLowerCase()){
+          delete store.reservas[keyRes];
+        } else if(nombre){
+          alert("El nombre no coincide. No se puede cancelar.");
+        }
+      }
+    }
+    guardar(); render();
+  }
+
+  // ==== EVENTOS ====
+  document.getElementById('prevWeek').onclick = ()=>{ fechaActual.setDate(fechaActual.getDate()-7); render(); };
+  document.getElementById('nextWeek').onclick = ()=>{ fechaActual.setDate(fechaActual.getDate()+7); render(); };
+  document.getElementById('hoyBtn').onclick   = ()=>{ fechaActual = new Date(); render(); };
+  document.getElementById('selectorSemana').addEventListener('change', (e)=>{
+    const v = e.target.value;
+    if(!v) return;
+    const [y,w] = v.split('-W').map(Number);
+    const simple = new Date(Date.UTC(y,0,1 + (w-1)*7));
+    const dow = simple.getUTCDay();
+    const lunes = new Date(simple);
+    if(dow <= 4) lunes.setUTCDate(simple.getUTCDate() - simple.getUTCDay()+1);
+    else lunes.setUTCDate(simple.getUTCDate() + 8 - simple.getUTCDay());
+    fechaActual = new Date(lunes.getUTCFullYear(), lunes.getUTCMonth(), lunes.getUTCDate());
+    render();
+  });
+  document.getElementById('modo').addEventListener('change', (e)=>{
+    if(e.target.value === 'admin' && !adminAutenticada){
+      if(!pedirCodigoAdmin()) e.target.value = 'docente';
+    }
+    render();
+  });
+
+  document.getElementById('exportarBtn').onclick = ()=>{
+    if(!pedirCodigoAdmin()) return;
+    const blob = new Blob([JSON.stringify(store,null,2)], {type:'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'reservas-aulas.json'; a.click();
+    URL.revokeObjectURL(url);
+  };
+  document.getElementById('importarBtn').onclick = ()=>{
+    if(!pedirCodigoAdmin()) return;
+    const input = document.createElement('input');
+    input.type = 'file'; input.accept = 'application/json';
+    input.onchange = e => {
+      const file = e.target.files[0]; if(!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const parsed = JSON.parse(reader.result);
+          if(parsed && parsed.reservas) store = parsed;
+          else throw new Error("formato");
+          guardar(); render(); alert("Datos importados.");
+        }
+        catch(err){ alert("Archivo no válido."); }
+      };
+      reader.readAsText(file);
+    };
+    input.click();
+  };
+  document.getElementById('resetBtn').onclick = ()=>{
+    if(!pedirCodigoAdmin()) return;
+    if(confirm("¿Borrar reservas FUTURAS y todos los bloqueos activos? (las reservas pasadas se conservan para trazabilidad)")){
+      Object.keys(store.reservas).forEach(k => {
+        const f = k.split('|')[1];
+        if(!esPasado(f)) delete store.reservas[k];
+      });
+      // Cerrar todos los bloqueos activos desde hoy
+      const hoyISO = fmtISO(new Date());
+      Object.keys(store.bloqueosRec).forEach(k=>{
+        store.bloqueosRec[k] = store.bloqueosRec[k].filter(b=>{
+          if(b.hasta === null || compararISO(b.hasta, hoyISO) >= 0){
+            if(compararISO(b.desde, hoyISO) >= 0) return false; // aún no empezaba, descartar
+            b.hasta = restarDia(hoyISO);
+          }
+          return true;
+        });
+        if(store.bloqueosRec[k].length === 0) delete store.bloqueosRec[k];
+      });
+      guardar(); render();
+    }
+  };
+
+  render();
+</script>
+</body>
+</html>
